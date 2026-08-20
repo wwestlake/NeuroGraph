@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass, field
-from typing import Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import numpy as np
 
@@ -59,6 +59,29 @@ class Node:
 
     def __len__(self) -> int:
         return len(self.member_embeddings)
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Full round-trip fidelity, not just a snapshot - member_embeddings
+        is included (not just the centroid) so a graph rebuilt via
+        from_dict() keeps computing a correct running-mean centroid as more
+        chunks are added later, not just displaying a frozen one. Larger
+        payload than a centroid-only summary would be; a compact/summary
+        mode is a reasonable future addition, not done here."""
+        return {
+            "id": self.id,
+            "centroid": self.centroid.tolist() if self.centroid is not None else None,
+            "member_embeddings": [e.tolist() for e in self.member_embeddings],
+            "member_texts": list(self.member_texts),
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Node":
+        node = cls(id=data["id"])
+        node.member_embeddings = [np.array(e, dtype=float) for e in data["member_embeddings"]]
+        node.member_texts = list(data["member_texts"])
+        centroid = data.get("centroid")
+        node.centroid = np.array(centroid, dtype=float) if centroid is not None else None
+        return node
 
 
 # A threshold function receives the current NodeStore (so it can look at
@@ -116,6 +139,18 @@ class NodeStore:
             if node.id == node_id:
                 return node
         return None
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"nodes": [n.to_dict() for n in self.nodes]}
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any], threshold_fn: Optional[ThresholdFn] = None) -> "NodeStore":
+        # threshold_fn is a Python callable, not JSON-serializable - the
+        # caller supplies it (defaults the same way __init__ does), same
+        # split NeuroGraph.from_dict uses for its embedder.
+        store = cls(threshold_fn=threshold_fn)
+        store.nodes = [Node.from_dict(n) for n in data["nodes"]]
+        return store
 
 
 @dataclass

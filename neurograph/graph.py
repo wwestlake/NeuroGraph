@@ -12,7 +12,7 @@ Two distinct weight concepts, matching the source research:
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -154,3 +154,34 @@ class NeuroGraph:
 
         scored.sort(key=lambda s: s.score, reverse=True)
         return scored[:top_k]
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Full round-trip state - not just a display snapshot. A server
+        handing this back to a caller and later receiving it again (see the
+        API's stateless-but-resumable design) reconstructs the exact same
+        graph, not an approximation of it."""
+        return {
+            "node_store": self.node_store.to_dict(),
+            "edges": [
+                {"node_a_id": e.node_a_id, "node_b_id": e.node_b_id, "weight": e.weight}
+                for e in self.edges
+            ],
+            "node_levels": dict(self._node_levels),
+        }
+
+    @classmethod
+    def from_dict(
+        cls,
+        data: Dict[str, Any],
+        embedder: Optional[EmbeddingBackend] = None,
+        threshold_fn: Optional[ThresholdFn] = None,
+    ) -> "NeuroGraph":
+        # embedder/threshold_fn aren't JSON-serializable (they're Python
+        # objects/callables) - the caller supplies them, same as __init__.
+        graph = cls(embedder=embedder, threshold_fn=threshold_fn)
+        graph.node_store = NodeStore.from_dict(data["node_store"], threshold_fn=threshold_fn)
+        for e in data["edges"]:
+            key = graph._edge_key(e["node_a_id"], e["node_b_id"])
+            graph._edges[key] = Edge(node_a_id=e["node_a_id"], node_b_id=e["node_b_id"], weight=e["weight"])
+        graph._node_levels = dict(data.get("node_levels", {}))
+        return graph

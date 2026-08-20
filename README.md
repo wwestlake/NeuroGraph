@@ -55,6 +55,38 @@ Requires Python 3.9+. The default embedding backend
 (`sentence-transformers`) downloads a small model on first use and
 caches it locally after that.
 
+## Running as a service
+
+For non-Python callers (or any app that wants NeuroGraph as a shared
+service rather than an embedded library), `neurograph/server.py` exposes
+it over HTTP:
+
+```bash
+pip install -e ".[server]"
+python run_server.py   # http://127.0.0.1:8000
+```
+
+The service is **stateless but resumable**: it holds no per-caller graph
+in memory between requests. Every `/ingest` response includes the full
+graph as JSON; hand that same JSON back in on the next call (as
+`"graph": {...}`) to keep growing the same graph over time. Storage is
+explicitly not this service's job - persist that JSON however your
+application already does (a database, a file, whatever fits) and pass it
+back in when you want to keep building on it.
+
+```
+POST /ingest  {"doc_id": "...", "chunks": [...], "graph": <optional prior graph>}
+           -> {"graph": {...}, "new_node_ids": [...], "assigned_node_ids": [...]}
+
+POST /query   {"query": "...", "graph": {...}, "top_k": 5}
+           -> {"results": [{"node_id", "score", "member_texts"}, ...]}
+```
+
+The embedding model itself loads once at server startup and is shared
+across every request - the one deliberate exception to "stateless,"
+since reloading a multi-second model per call would defeat the point of
+running this as a long-lived server.
+
 ## How it works
 
 1. **`embeddings.py`** - pluggable text-embedding interface. The default
@@ -86,8 +118,10 @@ Named and scoped out of v1 deliberately, not silently missing:
   monitoring layer (drift detection, stability thresholds, etc.) on top
   belongs in a separate, consuming project - keeping that math out of
   this repo is what keeps NeuroGraph itself general-purpose.
-- **Persistent graph backend** - v1 is in-memory. A real graph database
-  backend is a reasonable addition once there's an actual need for it.
+- **Persistent graph backend** - deliberately not NeuroGraph's job.
+  `to_dict()`/`from_dict()` give any caller a full, lossless JSON
+  round-trip; where/how that gets stored (a database, a file, a VFS) is
+  the consuming application's decision, not this repo's.
 - **Node splitting** - `Node.dispersion_score()` already measures cluster
   tightness; using a falling dispersion score to trigger splitting an
   overgrown node into two is a natural follow-up, not implemented yet.
